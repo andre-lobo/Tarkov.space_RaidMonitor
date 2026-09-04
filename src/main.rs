@@ -1023,13 +1023,16 @@ fn evaluate(
 
     // In a raid. Compare only across profiles (SCAV entering a previous PMC raid).
     let prev = if recent.len() >= 2 { Some(&recent[1]) } else { None };
-    let profiles_differ = prev.map_or(false, |p| {
-        !current.profile_id.is_empty()
+    // Only verdict when the transition is PMC -> SCAV (current SCAV, previous PMC).
+    let pmc_to_scav = prev.map_or(false, |p| {
+        !pctx.pmc_ids.is_empty()
+            && !current.profile_id.is_empty()
             && !p.profile_id.is_empty()
-            && current.profile_id != p.profile_id
+            && !pctx.pmc_ids.contains(&current.profile_id) // current = SCAV
+            && pctx.pmc_ids.contains(&p.profile_id) // previous = PMC
     });
 
-    if !profiles_differ {
+    if !pmc_to_scav {
         return Eval {
             monitoring: true,
             game_running,
