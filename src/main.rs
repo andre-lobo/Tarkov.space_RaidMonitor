@@ -100,6 +100,7 @@ impl Raid {
 struct ProfileCtx {
     pmc_ids: HashSet<String>,
     nick_by_id: HashMap<String, String>,
+    resolved: bool,
 }
 
 /// Display-ready view of a raid for the UI.
@@ -968,8 +969,8 @@ fn evaluate(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // Resolve local player identity once (until found).
-    if pctx.pmc_ids.is_empty() {
+    // Resolve local player identity once (cached to disk).
+    if !pctx.resolved {
         *pctx = resolve_profile(&subs);
     }
 
@@ -1080,11 +1081,14 @@ fn evaluate(
 // ---- Profile resolution ----
 
 /// Resolve PMC profile ids (selected at login, one per game mode) and each
-/// PMC's nickname (best-effort, from profile/dogtag JSON in the logs).
+/// PMC's nickname. Results are cached to disk so a nickname stays known even
+/// after the log that contained it is rotated/deleted.
 fn resolve_profile(subs: &[PathBuf]) -> ProfileCtx {
-    let mut pmc_ids: HashSet<String> = HashSet::new();
+    // Start from the on-disk cache (previously discovered ids/nicks).
+    let (mut pmc_ids, mut nick_by_id) = load_profiles_cache();
 
-    // Every mode's PMC is logged as a "SelectedProfile" at login. Scan all sessions.
+    // Every mode's PMC is logged as a "SelectedProfile" at login. Scan all sessions
+    // (application logs are small).
     for folder in subs {
         if let Some(applog) = find_application_log(folder) {
             if let Ok(bytes) = fs::read(&applog) {
@@ -1100,10 +1104,11 @@ fn resolve_profile(subs: &[PathBuf]) -> ProfileCtx {
         }
     }
 
-    // Best-effort nickname per PMC id, from the newest sessions only (bounded).
-    let mut nick_by_id: HashMap<String, String> = HashMap::new();
-    if !pmc_ids.is_empty() {
-        'scan: for folder in subs.iter().take(12) {
+    // Fill any missing nickname from profile/dogtag JSON (bounded to recent sessions;
+    // once found it is cached forever).
+    let need_nick = pmc_ids.iter().any(|id| !nick_by_id.contains_key(id));
+    if need_nick {
+        'scan: for folder in subs.iter().take(40) {
             if let Ok(rd) = fs::read_dir(folder) {
                 for e in rd.flatten() {
                     let p = e.path();
@@ -1136,7 +1141,7 @@ fn resolve_profile(subs: &[PathBuf]) -> ProfileCtx {
                             }
                         }
                     }
-                    if nick_by_id.len() == pmc_ids.len() {
+                    if pmc_ids.iter().all(|id| nick_by_id.contains_key(id)) {
                         break 'scan;
                     }
                 }
@@ -1144,7 +1149,54 @@ fn resolve_profile(subs: &[PathBuf]) -> ProfileCtx {
         }
     }
 
-    ProfileCtx { pmc_ids, nick_by_id }
+    save_profiles_cache(&pmc_ids, &nick_by_id);
+
+    ProfileCtx {
+        pmc_ids,
+        nick_by_id,
+        resolved: true,
+    }
+}
+
+fn profiles_cache_path() -> PathBuf {
+    let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    let dir = Path::new(&base).join("Raid IP Monitor");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("profiles.txt")
+}
+
+/// Loads cached "pmcid=nick" lines (nick may be empty).
+fn load_profiles_cache() -> (HashSet<String>, HashMap<String, String>) {
+    let mut ids = HashSet::new();
+    let mut nicks = HashMap::new();
+    if let Ok(text) = fs::read_to_string(profiles_cache_path()) {
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let (id, nick) = match line.split_once('=') {
+                Some((a, b)) => (a.trim().to_string(), b.trim().to_string()),
+                None => (line.to_string(), String::new()),
+            };
+            if !id.is_empty() {
+                ids.insert(id.clone());
+                if !nick.is_empty() {
+                    nicks.insert(id, nick);
+                }
+            }
+        }
+    }
+    (ids, nicks)
+}
+
+fn save_profiles_cache(ids: &HashSet<String>, nicks: &HashMap<String, String>) {
+    let mut out = String::new();
+    for id in ids {
+        let nick = nicks.get(id).cloned().unwrap_or_default();
+        out.push_str(&format!("{}={}\n", id, nick));
+    }
+    let _ = fs::write(profiles_cache_path(), out);
 }
 
 /// Value after `key` up to the next whitespace (for "ProfileId:xxxx AccountId:yyy").
