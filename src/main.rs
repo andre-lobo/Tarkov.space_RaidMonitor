@@ -299,27 +299,18 @@ fn spawn_tray(ctx: egui::Context, visible: Arc<AtomicBool>) {
             Err(_) => return,
         };
 
-        // Directly drive the root viewport's visibility from this thread.
-        let apply = move |ctx: &egui::Context, visible: &Arc<AtomicBool>, show: bool| {
-            visible.store(show, Ordering::Relaxed);
-            ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Visible(show));
-            if show {
-                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-            }
-            ctx.request_repaint();
-        };
-
         // Menu clicks (Show/Hide, Quit).
         {
             let ctx = ctx.clone();
             let visible = visible.clone();
-            let apply = apply.clone();
             MenuEvent::set_event_handler(Some(move |ev: MenuEvent| {
                 if ev.id == quit_id {
                     std::process::exit(0);
                 } else if ev.id == toggle_id {
                     let show = !visible.load(Ordering::Relaxed);
-                    apply(&ctx, &visible, show);
+                    visible.store(show, Ordering::Relaxed);
+                    set_window_visible(show);
+                    ctx.request_repaint();
                 }
             }));
         }
@@ -327,7 +318,6 @@ fn spawn_tray(ctx: egui::Context, visible: Arc<AtomicBool>) {
         {
             let ctx = ctx.clone();
             let visible = visible.clone();
-            let apply = apply.clone();
             TrayIconEvent::set_event_handler(Some(move |ev: TrayIconEvent| {
                 if let TrayIconEvent::Click {
                     button: tray_icon::MouseButton::Left,
@@ -335,7 +325,9 @@ fn spawn_tray(ctx: egui::Context, visible: Arc<AtomicBool>) {
                     ..
                 } = ev
                 {
-                    apply(&ctx, &visible, true);
+                    visible.store(true, Ordering::Relaxed);
+                    set_window_visible(true);
+                    ctx.request_repaint();
                 }
             }));
         }
@@ -613,7 +605,7 @@ impl eframe::App for RaidRadar {
                             .clicked()
                         {
                             self.visible.store(false, Ordering::Relaxed);
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                            set_window_visible(false);
                         }
                     });
                 });
@@ -711,17 +703,13 @@ fn raid_card(ui: &mut egui::Ui, id: &str, title: &str, r: &RaidView, ip_color: e
             });
             ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("IP:").size(12.0).color(MUTED));
-                ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(&r.ip)
-                        .size(22.0)
-                        .strong()
-                        .monospace()
-                        .color(ip_color),
-                );
-            });
+            ui.label(
+                egui::RichText::new(&r.ip)
+                    .size(22.0)
+                    .strong()
+                    .monospace()
+                    .color(ip_color),
+            );
             ui.add_space(8.0);
 
             egui::Grid::new(id)
@@ -1360,6 +1348,47 @@ fn is_game_running() -> bool {
         }
         let _ = CloseHandle(snap);
         found
+    }
+}
+
+// ---- Native window show/hide (reliable, via Win32) ----
+
+/// Find this process's own top-level window (the one with a title).
+fn main_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId,
+    };
+    unsafe extern "system" fn cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let data = &mut *(lparam.0 as *mut (u32, Option<HWND>));
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == data.0 && GetWindowTextLengthW(hwnd) > 0 {
+            data.1 = Some(hwnd);
+            return BOOL(0); // stop enumeration
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let mut data: (u32, Option<HWND>) = (GetCurrentProcessId(), None);
+        let _ = EnumWindows(Some(cb), LPARAM(&mut data as *mut _ as isize));
+        data.1
+    }
+}
+
+/// Show or hide the app's own window (reliable, independent of the window title).
+fn set_window_visible(show: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOW,
+    };
+    if let Some(hwnd) = main_hwnd() {
+        unsafe {
+            let _ = ShowWindow(hwnd, if show { SW_SHOW } else { SW_HIDE });
+            if show {
+                let _ = SetForegroundWindow(hwnd);
+            }
+        }
     }
 }
 
