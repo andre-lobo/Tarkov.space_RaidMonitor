@@ -1,0 +1,4 @@
+# Statically link the C runtime so the .exe runs on any Windows 10/11
+# with no external DLLs (no VC++ redistributable needed) — single-file share.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

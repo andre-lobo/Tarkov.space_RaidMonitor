@@ -1,0 +1,32 @@
+[package]
+name = "raidradar"
+version = "1.0.0"
+edition = "2021"
+description = "Tarkov same-raid checker (by server IP)"
+
+[[bin]]
+name = "raid-ip-monitor"
+path = "src/main.rs"
+
+[dependencies]
+eframe = "0.29"
+rfd = "0.15"
+notify = "6.1"
+tray-icon = "0.19"
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+windows = { version = "0.58", features = [
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Foundation",
+] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

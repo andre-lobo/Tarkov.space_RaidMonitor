@@ -1,0 +1,12 @@
+# Rust build output
+/target
+
+# Local built binaries copied to the repo root
+/*.exe
+
+# OS / editor junk
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/

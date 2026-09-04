@@ -1,0 +1,50 @@
+name: Build & Release
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Prepare asset
+        shell: pwsh
+        run: Copy-Item "target/release/raid-ip-monitor.exe" "Tarkov.space_RaidMonitor.exe"
+
+      - name: Release info
+        id: rel
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like 'refs/tags/*') {
+            $tag = $env:GITHUB_REF -replace 'refs/tags/',''
+            "tag=$tag"          | Out-File $env:GITHUB_OUTPUT -Append
+            "name=$tag"         | Out-File $env:GITHUB_OUTPUT -Append
+          } else {
+            "tag=latest"        | Out-File $env:GITHUB_OUTPUT -Append
+            "name=Latest build" | Out-File $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.rel.outputs.tag }}
+          name: ${{ steps.rel.outputs.name }}
+          make_latest: true
+          files: Tarkov.space_RaidMonitor.exe
