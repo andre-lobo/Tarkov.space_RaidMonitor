@@ -41,6 +41,22 @@ jobs:
             "name=Latest build" | Out-File $env:GITHUB_OUTPUT -Append
           }
 
+      - name: Remove old assets from this release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.rel.outputs.tag }}"
+          $names = gh release view $tag --json assets --jq '.assets[].name' 2>$null
+          if ($LASTEXITCODE -eq 0 -and $names) {
+            foreach ($n in $names) {
+              Write-Host "Deleting old asset: $n"
+              gh release delete-asset $tag "$n" -y 2>$null
+            }
+          } else {
+            Write-Host "No existing release/assets to clean."
+          }
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
