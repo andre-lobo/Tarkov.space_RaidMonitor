@@ -26,7 +26,7 @@ jobs:
 
       - name: Prepare asset
         shell: pwsh
-        run: Copy-Item "target/release/raid-ip-monitor.exe" "Tarkov.space Raid Monitor.exe"
+        run: Copy-Item "target/release/raid-ip-monitor.exe" "TarkovSpace_RaidMonitor.exe"
 
       - name: Release info
         id: rel
@@ -63,4 +63,4 @@ jobs:
           tag_name: ${{ steps.rel.outputs.tag }}
           name: ${{ steps.rel.outputs.name }}
           make_latest: true
-          files: Tarkov.space Raid Monitor.exe
+          files: TarkovSpace_RaidMonitor.exe
