@@ -75,7 +75,6 @@ impl Default for Status {
 struct Raid {
     ts: String,
     profile_id: String,
-    ip: String,
     addr: String, // ip:port
     location: String,
     game_mode: String,
@@ -990,22 +989,43 @@ fn evaluate(
     }
 
     let history: Vec<RaidView> = recent.iter().map(|r| build_view(r, pctx)).collect();
-    let current = &recent[0];
-    let cur_view = build_view(current, pctx);
-    let new_key = current.key();
-
     let game_running = is_game_running();
-    let in_raid = is_in_raid(&subs[0]);
 
-    // Capture baseline state, then advance it, so the sound only fires on a
-    // genuinely new cross-profile "same raid" detection.
+    // Ground truth for the actual raid server comes from the network-connection
+    // log of the latest session; profiles (PMC/SCAV) come from the application
+    // log, matched by timestamp.
+    let latest = &subs[0];
+    let app_latest: Vec<Raid> = find_application_log(latest)
+        .and_then(|p| parse_raids(&p).ok())
+        .unwrap_or_default();
+    let (conns, connected) = parse_connections(latest);
+    let in_raid = connected && !conns.is_empty();
+
+    // Build a display view + side (PMC/SCAV) for a connection.
+    let view_for = |c: &Conn| -> (RaidView, &'static str) {
+        match match_raid(&app_latest, c) {
+            Some(r) => {
+                let mut v = build_view(r, pctx);
+                v.ip = c.addr.clone(); // authoritative server address
+                (v, profile_side(r, pctx))
+            }
+            None => (conn_view(c), ""),
+        }
+    };
+
+    // Baseline for the sound: keyed on the current connection (or last match).
+    let new_key = match conns.last() {
+        Some(c) => format!("{}|{}", c.ts, c.addr),
+        None => recent.first().map(|r| r.key()).unwrap_or_default(),
+    };
     let key_changed = new_key != *last_key;
     let was_initialized = *initialized;
-    *last_key = new_key.clone();
+    *last_key = new_key;
     *initialized = true;
 
-    // Not currently in a raid -> you are in the menu.
+    // Not currently in a raid -> menu (show the last match from history).
     if !in_raid {
+        let cur_view = recent.first().map(|r| build_view(r, pctx));
         return Eval {
             monitoring: true,
             game_running,
@@ -1014,24 +1034,32 @@ fn evaluate(
             headline: "IN MENU".into(),
             note: "Not in a raid \u{2014} waiting for the next one.".into(),
             session,
-            current: Some(cur_view),
+            current: cur_view,
             previous: None,
             history,
             is_new_same: false,
         };
     }
 
-    // In a raid. Compare only across profiles (SCAV entering a previous PMC raid).
-    let prev = if recent.len() >= 2 { Some(&recent[1]) } else { None };
-    // Only verdict when the transition is PMC -> SCAV (current SCAV, previous PMC).
-    let pmc_to_scav = prev.map_or(false, |p| {
-        !pctx.pmc_ids.is_empty()
-            && !current.profile_id.is_empty()
-            && !p.profile_id.is_empty()
-            && !pctx.pmc_ids.contains(&current.profile_id) // current = SCAV
-            && pctx.pmc_ids.contains(&p.profile_id) // previous = PMC
-    });
+    let cur = conns.last().unwrap();
+    let (cur_view, cur_side) = view_for(cur);
 
+    // Need a previous connection to compare against.
+    let prev = if conns.len() >= 2 {
+        Some(&conns[conns.len() - 2])
+    } else {
+        None
+    };
+    let (prev_view, prev_side) = match prev {
+        Some(p) => {
+            let (v, s) = view_for(p);
+            (Some(v), s)
+        }
+        None => (None, ""),
+    };
+
+    // Verdict only on PMC -> SCAV (current SCAV, previous PMC).
+    let pmc_to_scav = cur_side == "SCAV" && prev_side == "PMC";
     if !pmc_to_scav {
         return Eval {
             monitoring: true,
@@ -1048,8 +1076,8 @@ fn evaluate(
         };
     }
 
-    let prev = prev.unwrap();
-    let same = current.ip == prev.ip;
+    // Same raid instance = identical server address (ip:port).
+    let same = prev.map_or(false, |p| p.addr == cur.addr);
     let is_new_same = same && was_initialized && key_changed;
 
     let (status, headline, note) = if same {
@@ -1075,7 +1103,7 @@ fn evaluate(
         note: note.into(),
         session,
         current: Some(cur_view),
-        previous: Some(build_view(prev, pctx)),
+        previous: prev_view,
         history,
         is_new_same,
     }
@@ -1271,28 +1299,80 @@ fn find_network_connection_log(folder: &Path) -> Option<PathBuf> {
 }
 
 /// Are we currently connected to a raid server (in a raid) in this session?
-fn is_in_raid(folder: &Path) -> bool {
+/// One actual game-server connection (from network-connection log).
+#[derive(Clone)]
+struct Conn {
+    ts: String,
+    addr: String, // ip:port  (the real raid instance)
+}
+
+/// Parse the real game-server connections (chronological) and whether we are
+/// currently connected (in a raid). This is the ground truth for the raid IP.
+fn parse_connections(folder: &Path) -> (Vec<Conn>, bool) {
     let log = match find_network_connection_log(folder) {
         Some(l) => l,
-        None => return false,
+        None => return (Vec::new(), false),
     };
     let bytes = fs::read(&log).unwrap_or_default();
     let text = String::from_utf8_lossy(&bytes);
+    let mut conns: Vec<Conn> = Vec::new();
     let mut connected = false;
     for line in text.lines() {
         let msg = line.rsplit('|').next().unwrap_or("").trim();
-        if msg.starts_with("Connect (address:")
-            || msg.starts_with("Enter to the 'Connected' state")
-        {
-            connected = true;
+        if let Some(rest) = msg.strip_prefix("Connect (address: ") {
+            if let Some(addr) = rest.strip_suffix(')') {
+                let addr = addr.trim().to_string();
+                let ts = line.split('|').next().unwrap_or("").trim().to_string();
+                // Collapse a reconnect burst to the same server.
+                if conns.last().map_or(true, |c| c.addr != addr) {
+                    conns.push(Conn { ts, addr });
+                }
+                connected = true;
+            }
         } else if msg.starts_with("Disconnect (address:")
             || msg.starts_with("Enter to the 'Disconnected' state")
             || msg.starts_with("Thread was being aborted")
         {
             connected = false;
+        } else if msg.starts_with("Enter to the 'Connected' state") {
+            connected = true;
         }
     }
-    connected
+    (conns, connected)
+}
+
+/// Timestamp "YYYY-MM-DD HH:MM:SS.mmm" -> comparable YYYYMMDDHHMMSS integer.
+fn ts_key(ts: &str) -> i64 {
+    let digits: String = ts.chars().filter(|c| c.is_ascii_digit()).take(14).collect();
+    digits.parse().unwrap_or(0)
+}
+
+/// Match a connection to the application-log raid at (nearly) the same time,
+/// to learn its profile (PMC/SCAV). App TRACE and the connect share a timestamp.
+fn match_raid<'a>(app: &'a [Raid], c: &Conn) -> Option<&'a Raid> {
+    let target = ts_key(&c.ts);
+    // Prefer a raid with the same address; otherwise nearest time.
+    let same_addr = app
+        .iter()
+        .filter(|r| r.addr == c.addr)
+        .min_by_key(|r| (ts_key(&r.ts) - target).abs());
+    if same_addr.is_some() {
+        return same_addr;
+    }
+    app.iter().min_by_key(|r| (ts_key(&r.ts) - target).abs())
+}
+
+/// Minimal view when no application raid could be matched to a connection.
+fn conn_view(c: &Conn) -> RaidView {
+    RaidView {
+        time: fmt_time(&c.ts),
+        ip: c.addr.clone(),
+        location: "-".into(),
+        mode: "-".into(),
+        profile: "-".into(),
+        mode_tag: String::new(),
+        side: String::new(),
+    }
 }
 
 fn find_application_log(folder: &Path) -> Option<PathBuf> {
@@ -1349,7 +1429,6 @@ fn parse_raids(log: &Path) -> std::io::Result<Vec<Raid>> {
         let raid = Raid {
             ts: line.split('|').next().unwrap_or("").trim().to_string(),
             profile_id: field(line, "Profileid"),
-            ip,
             addr,
             location: field(line, "Location"),
             game_mode: field(line, "GameMode"),
