@@ -17,6 +17,17 @@ use windows::Win32::System::Diagnostics::Debug::Beep;
 const APP_TITLE: &str = "Tarkov.space - Raid Monitor";
 const GAME_EXE: &str = "EscapeFromTarkov.exe";
 
+/// Human-readable version string, e.g. "v1.0.0 · build 12 · 14ec9d3".
+/// The hash/build number are injected by build.rs and change every commit.
+fn app_version() -> String {
+    format!(
+        "v{} \u{00b7} build {} \u{00b7} {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("BUILD_NUM"),
+        env!("BUILD_HASH"),
+    )
+}
+
 // ---- Colors ----
 const BG: egui::Color32 = egui::Color32::from_rgb(0x14, 0x16, 0x1A); // #14161A
 const PANEL: egui::Color32 = egui::Color32::from_rgb(0x1D, 0x20, 0x26);
@@ -592,6 +603,9 @@ impl eframe::App for RaidRadar {
                     {
                         self.show_history = true;
                     }
+
+                    ui.add_space(12.0);
+                    ui.label(egui::RichText::new(app_version()).size(10.5).color(MUTED));
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
