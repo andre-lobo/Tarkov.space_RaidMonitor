@@ -709,7 +709,7 @@ impl eframe::App for RaidRadar {
                         }
                         UpdateStatus::UpToDate => {
                             ui.label(
-                                egui::RichText::new("\u{2713} Up to date").size(11.0).color(GREEN),
+                                egui::RichText::new("Up to date").size(11.0).color(GREEN),
                             );
                         }
                         UpdateStatus::Available => {
