@@ -63,4 +63,7 @@ jobs:
           tag_name: ${{ steps.rel.outputs.tag }}
           name: ${{ steps.rel.outputs.name }}
           make_latest: true
+          body: |
+            Automatic build ${{ github.run_number }}
+            hash=${{ github.sha }}
           files: TarkovSpace_RaidMonitor.exe

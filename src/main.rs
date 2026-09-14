@@ -16,6 +16,18 @@ use windows::Win32::System::Diagnostics::Debug::Beep;
 
 const APP_TITLE: &str = "Tarkov.space - Raid Monitor";
 const GAME_EXE: &str = "EscapeFromTarkov.exe";
+const RELEASES_URL: &str = "https://github.com/andre-lobo/Tarkov.space_RaidMonitor/releases/latest";
+const RELEASE_API: &str =
+    "https://api.github.com/repos/andre-lobo/Tarkov.space_RaidMonitor/releases/latest";
+
+#[derive(Clone, PartialEq)]
+enum UpdateStatus {
+    Idle,
+    Checking,
+    UpToDate,
+    Available,
+    Error,
+}
 
 /// Human-readable version string, e.g. "v1.0.0 · build 12 · 14ec9d3".
 /// The hash/build number are injected by build.rs and change every commit.
@@ -47,7 +59,7 @@ fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([600.0, 630.0])
+        .with_inner_size([660.0, 630.0])
         .with_resizable(false)
         .with_maximize_button(false)
         .with_title(APP_TITLE);
@@ -238,6 +250,7 @@ struct RaidRadar {
     icon: Option<egui::TextureHandle>,
     show_history: bool,
     visible: Arc<AtomicBool>,
+    update: Arc<Mutex<UpdateStatus>>,
 }
 
 impl RaidRadar {
@@ -275,7 +288,69 @@ impl RaidRadar {
             icon,
             show_history: false,
             visible,
+            update: Arc::new(Mutex::new(UpdateStatus::Idle)),
         }
+    }
+}
+
+/// Checks GitHub for a newer build (compares the released commit hash with ours).
+fn check_update(ctx: egui::Context, state: Arc<Mutex<UpdateStatus>>) {
+    *state.lock().unwrap() = UpdateStatus::Checking;
+    ctx.request_repaint();
+    thread::spawn(move || {
+        let status = match fetch_latest_hash() {
+            Some(latest) => {
+                let mine = env!("BUILD_HASH");
+                let n = mine.len().min(latest.len());
+                if n > 0 && mine[..n] == latest[..n] {
+                    UpdateStatus::UpToDate
+                } else {
+                    UpdateStatus::Available
+                }
+            }
+            None => UpdateStatus::Error,
+        };
+        *state.lock().unwrap() = status;
+        ctx.request_repaint();
+    });
+}
+
+fn fetch_latest_hash() -> Option<String> {
+    let resp = ureq::get(RELEASE_API)
+        .set("User-Agent", "TarkovSpace-RaidMonitor")
+        .timeout(Duration::from_secs(10))
+        .call()
+        .ok()?;
+    let text = resp.into_string().ok()?;
+    let pos = text.find("hash=")? + "hash=".len();
+    let rest = &text[pos..];
+    let end = rest
+        .find(|c: char| !c.is_ascii_hexdigit())
+        .unwrap_or(rest.len());
+    let h = &rest[..end];
+    if h.is_empty() {
+        None
+    } else {
+        Some(h.to_string())
+    }
+}
+
+/// Open a URL in the default browser (no console flash).
+fn open_url(url: &str) {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let op = HSTRING::from("open");
+    let file = HSTRING::from(url);
+    unsafe {
+        ShellExecuteW(
+            None,
+            PCWSTR(op.as_ptr()),
+            PCWSTR(file.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 
@@ -606,6 +681,54 @@ impl eframe::App for RaidRadar {
 
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(app_version()).size(10.5).color(MUTED));
+                    ui.add_space(10.0);
+
+                    // Update check
+                    let st = self.update.lock().unwrap().clone();
+                    match st {
+                        UpdateStatus::Idle | UpdateStatus::Error => {
+                            let txt = if st == UpdateStatus::Error {
+                                "Check updates (failed \u{2013} retry)"
+                            } else {
+                                "Check updates"
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new(txt).size(11.0).color(TEXT),
+                                    )
+                                    .fill(PANEL),
+                                )
+                                .clicked()
+                            {
+                                check_update(ctx.clone(), self.update.clone());
+                            }
+                        }
+                        UpdateStatus::Checking => {
+                            ui.label(egui::RichText::new("Checking\u{2026}").size(11.0).color(MUTED));
+                        }
+                        UpdateStatus::UpToDate => {
+                            ui.label(
+                                egui::RichText::new("\u{2713} Up to date").size(11.0).color(GREEN),
+                            );
+                        }
+                        UpdateStatus::Available => {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("Update available!")
+                                            .size(11.0)
+                                            .strong()
+                                            .color(BG),
+                                    )
+                                    .fill(ACCENT),
+                                )
+                                .clicked()
+                            {
+                                open_url(RELEASES_URL);
+                            }
+                        }
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
