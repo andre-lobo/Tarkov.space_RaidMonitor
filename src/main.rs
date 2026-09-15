@@ -107,10 +107,12 @@ struct Raid {
 
 impl Raid {
     fn key(&self) -> String {
+        // Include the profile id: PMC and SCAV share the same Sid when they enter
+        // the SAME raid instance, so keying on Sid alone would drop the SCAV entry.
         if self.sid.is_empty() {
             format!("{}|{}", self.profile_id, self.addr)
         } else {
-            self.sid.clone()
+            format!("{}|{}", self.sid, self.profile_id)
         }
     }
 }
