@@ -1460,8 +1460,10 @@ fn parse_connections(folder: &Path) -> (Vec<Conn>, bool) {
             if let Some(addr) = rest.strip_suffix(')') {
                 let addr = addr.trim().to_string();
                 let ts = line.split('|').next().unwrap_or("").trim().to_string();
-                // Collapse a reconnect burst to the same server.
-                if conns.last().map_or(true, |c| c.addr != addr) {
+                // A new raid = a Connect while not currently connected. A Connect
+                // while already connected is just a reconnect burst -> skip it.
+                // (Re-entering the SAME server after a Disconnect IS a new raid.)
+                if !connected {
                     conns.push(Conn { ts, addr });
                 }
                 connected = true;
