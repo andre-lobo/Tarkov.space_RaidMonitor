@@ -1160,8 +1160,8 @@ fn evaluate(
     *last_key = new_key;
     *initialized = true;
 
-    // Not currently in a raid -> menu (show the last match from history).
-    if !in_raid {
+    // No connection this session yet -> menu, show the last match from history.
+    if conns.is_empty() {
         let cur_view = recent.first().map(|r| build_view(r, pctx));
         return Eval {
             monitoring: true,
@@ -1178,10 +1178,9 @@ fn evaluate(
         };
     }
 
+    // Current (or last) connection + the one before it.
     let cur = conns.last().unwrap();
     let (cur_view, cur_side) = view_for(cur);
-
-    // Need a previous connection to compare against.
     let prev = if conns.len() >= 2 {
         Some(&conns[conns.len() - 2])
     } else {
@@ -1195,42 +1194,52 @@ fn evaluate(
         None => (None, ""),
     };
 
-    // Verdict only on PMC -> SCAV (current SCAV, previous PMC).
+    // Verdict on a PMC -> SCAV pair (current/last SCAV, previous PMC). Shown live
+    // AND retrospectively for the last completed raid; the sound only fires live.
     let pmc_to_scav = cur_side == "SCAV" && prev_side == "PMC";
-    if !pmc_to_scav {
+    if pmc_to_scav {
+        let same = prev.map_or(false, |p| p.addr == cur.addr);
+        let is_new_same = same && in_raid && was_initialized && key_changed;
+        let (status, headline) = if same {
+            (Status::Same, "SAME RAID")
+        } else {
+            (Status::Different, "DIFFERENT RAID")
+        };
+        let note = match (same, in_raid) {
+            (true, true) => "You entered the SAME raid as your previous PMC match.",
+            (false, true) => "Different raid from your previous PMC match.",
+            (true, false) => "Your last SCAV was the SAME raid as your previous PMC match.",
+            (false, false) => "Your last SCAV was a different raid from your previous PMC match.",
+        };
         return Eval {
             monitoring: true,
             game_running,
             in_raid,
-            status: Status::Info,
-            headline: "IN RAID".into(),
-            note: "In a raid \u{2014} same-raid check runs when you enter as SCAV.".into(),
+            status,
+            headline: headline.into(),
+            note: note.into(),
             session,
             current: Some(cur_view),
-            previous: None,
+            previous: prev_view,
             history,
-            is_new_same: false,
+            is_new_same,
         };
     }
 
-    // Same raid instance = identical server address (ip:port).
-    let same = prev.map_or(false, |p| p.addr == cur.addr);
-    let is_new_same = same && was_initialized && key_changed;
-
-    let (status, headline, note) = if same {
+    // No PMC -> SCAV pair: plain in-raid / menu state.
+    let (status, headline, note) = if in_raid {
         (
-            Status::Same,
-            "SAME RAID",
-            "You entered the SAME raid as your previous PMC match.",
+            Status::Info,
+            "IN RAID",
+            "In a raid \u{2014} same-raid check runs when you enter as SCAV.",
         )
     } else {
         (
-            Status::Different,
-            "DIFFERENT RAID",
-            "Different raid from your previous PMC match.",
+            Status::Idle,
+            "IN MENU",
+            "Not in a raid \u{2014} waiting for the next one.",
         )
     };
-
     Eval {
         monitoring: true,
         game_running,
@@ -1240,9 +1249,9 @@ fn evaluate(
         note: note.into(),
         session,
         current: Some(cur_view),
-        previous: prev_view,
+        previous: None,
         history,
-        is_new_same,
+        is_new_same: false,
     }
 }
 
