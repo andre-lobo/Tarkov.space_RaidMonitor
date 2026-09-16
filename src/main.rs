@@ -525,7 +525,6 @@ impl eframe::App for RaidRadar {
                 s.status.clone(),
                 s.headline.clone(),
                 s.note.clone(),
-                s.session.clone(),
                 s.current.clone(),
                 s.previous.clone(),
                 s.history.clone(),
@@ -538,7 +537,6 @@ impl eframe::App for RaidRadar {
             status,
             headline,
             note,
-            session,
             current,
             previous,
             history,
@@ -730,14 +728,6 @@ impl eframe::App for RaidRadar {
                             }
                         }
 
-                        if !session.is_empty() {
-                            ui.add_space(12.0);
-                            ui.label(
-                                egui::RichText::new(format!("Latest session: {}", session))
-                                    .size(10.5)
-                                    .color(MUTED),
-                            );
-                        }
                     });
             });
 
