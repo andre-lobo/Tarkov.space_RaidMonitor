@@ -253,6 +253,14 @@ struct RaidRadar {
     show_history: bool,
     visible: Arc<AtomicBool>,
     update: Arc<Mutex<UpdateStatus>>,
+    // Discord alert
+    show_discord: bool,
+    discord_enabled: bool,
+    discord_webhook: String,
+    discord_token: String,
+    discord_user: String,
+    discord_shared: Arc<Mutex<DiscordConfig>>,
+    discord_test: Arc<Mutex<String>>,
 }
 
 impl RaidRadar {
@@ -262,10 +270,14 @@ impl RaidRadar {
         let sound = Arc::new(AtomicBool::new(true));
         let (ctrl_tx, ctrl_rx) = mpsc::channel::<String>();
 
+        let dcfg = load_discord();
+        let discord_shared = Arc::new(Mutex::new(dcfg.clone()));
+
         spawn_worker(
             cc.egui_ctx.clone(),
             shared.clone(),
             sound.clone(),
+            discord_shared.clone(),
             folder.clone(),
             ctrl_rx,
         );
@@ -291,6 +303,13 @@ impl RaidRadar {
             show_history: false,
             visible,
             update: Arc::new(Mutex::new(UpdateStatus::Idle)),
+            show_discord: false,
+            discord_enabled: dcfg.enabled,
+            discord_webhook: dcfg.webhook,
+            discord_token: dcfg.token,
+            discord_user: dcfg.user,
+            discord_shared,
+            discord_test: Arc::new(Mutex::new(String::new())),
         }
     }
 }
@@ -448,6 +467,21 @@ impl eframe::App for RaidRadar {
             self.sound.store(self.sound_ui, Ordering::Relaxed);
         }
 
+        // Keep the worker's Discord config in sync with the UI fields.
+        {
+            let mut g = self.discord_shared.lock().unwrap();
+            if g.enabled != self.discord_enabled
+                || g.webhook != self.discord_webhook
+                || g.token != self.discord_token
+                || g.user != self.discord_user
+            {
+                g.enabled = self.discord_enabled;
+                g.webhook = self.discord_webhook.clone();
+                g.token = self.discord_token.clone();
+                g.user = self.discord_user.clone();
+            }
+        }
+
         let mut style = (*ctx.style()).clone();
         style.visuals.override_text_color = Some(TEXT);
         style.visuals.panel_fill = BG;
@@ -516,6 +550,19 @@ impl eframe::App for RaidRadar {
                         }
                         ui.add_space(6.0);
                         ui.checkbox(&mut self.sound_ui, egui::RichText::new("Sound").color(MUTED));
+                        ui.add_space(8.0);
+                        let dcolor = if self.discord_enabled { GREEN } else { MUTED };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Discord").size(12.0).color(dcolor),
+                                )
+                                .fill(PANEL),
+                            )
+                            .clicked()
+                        {
+                            self.show_discord = true;
+                        }
                     });
                 });
                 ui.label(
@@ -799,6 +846,160 @@ impl eframe::App for RaidRadar {
                 }
             });
         }
+
+        // ---- Discord settings modal ----
+        if self.show_discord {
+            let screen = ctx.screen_rect();
+            let mut close = false;
+            egui::Area::new(egui::Id::new("discord_dim"))
+                .order(egui::Order::Middle)
+                .fixed_pos(screen.min)
+                .show(ctx, |ui| {
+                    ui.painter()
+                        .rect_filled(screen, 0.0, egui::Color32::from_black_alpha(160));
+                    if ui.allocate_rect(screen, egui::Sense::click()).clicked() {
+                        close = true;
+                    }
+                });
+
+            egui::Window::new(egui::RichText::new("Discord alert").color(ACCENT).strong())
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .frame(
+                    egui::Frame::window(&ctx.style())
+                        .fill(BG)
+                        .inner_margin(egui::Margin::same(16.0)),
+                )
+                .show(ctx, |ui| {
+                    ui.set_width(430.0);
+                    ui.checkbox(
+                        &mut self.discord_enabled,
+                        egui::RichText::new("Send a Discord message on SAME RAID").color(TEXT),
+                    );
+                    ui.add_space(12.0);
+
+                    ui.label(
+                        egui::RichText::new("Webhook URL (posts to a channel)")
+                            .size(12.0)
+                            .color(MUTED),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.discord_webhook)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("https://discord.com/api/webhooks/..."),
+                    );
+                    ui.add_space(12.0);
+
+                    ui.label(
+                        egui::RichText::new("\u{2014} or private DM via a bot \u{2014}")
+                            .size(11.0)
+                            .color(MUTED),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("Bot token").size(12.0).color(MUTED));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.discord_token)
+                            .desired_width(f32::INFINITY)
+                            .password(true)
+                            .hint_text("bot token"),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new("Your Discord User ID")
+                            .size(12.0)
+                            .color(MUTED),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.discord_user)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("e.g. 123456789012345678"),
+                    );
+                    ui.add_space(14.0);
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("Send test").color(BG).strong(),
+                                )
+                                .fill(ACCENT),
+                            )
+                            .clicked()
+                        {
+                            let cfg = DiscordConfig {
+                                enabled: self.discord_enabled,
+                                webhook: self.discord_webhook.clone(),
+                                token: self.discord_token.clone(),
+                                user: self.discord_user.clone(),
+                            };
+                            save_discord(&cfg);
+                            let status = self.discord_test.clone();
+                            *status.lock().unwrap() = "Sending\u{2026}".into();
+                            let ctx2 = ctx.clone();
+                            thread::spawn(move || {
+                                let r = discord_send(
+                                    &cfg,
+                                    "\u{2705} Test \u{2014} Tarkov.space Raid Monitor is connected.",
+                                );
+                                *status.lock().unwrap() = match r {
+                                    Ok(()) => "Sent!".into(),
+                                    Err(e) => format!("Failed: {}", e),
+                                };
+                                ctx2.request_repaint();
+                            });
+                        }
+                        ui.add_space(8.0);
+                        let st = self.discord_test.lock().unwrap().clone();
+                        if !st.is_empty() {
+                            let c = if st == "Sent!" {
+                                GREEN
+                            } else if st.starts_with("Failed") {
+                                RED
+                            } else {
+                                MUTED
+                            };
+                            ui.label(egui::RichText::new(st).size(12.0).color(c));
+                        }
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            egui::RichText::new("Close").color(TEXT),
+                                        )
+                                        .fill(PANEL),
+                                    )
+                                    .clicked()
+                                {
+                                    close = true;
+                                }
+                            },
+                        );
+                    });
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Webhook: channel \u{2192} Edit \u{2192} Integrations \u{2192} Webhooks (use a private channel). \
+                             DM: create a bot, share a server with it, and enable Developer Mode to copy your User ID.",
+                        )
+                        .size(10.5)
+                        .color(MUTED),
+                    );
+                });
+
+            if close {
+                self.show_discord = false;
+                let cfg = DiscordConfig {
+                    enabled: self.discord_enabled,
+                    webhook: self.discord_webhook.clone(),
+                    token: self.discord_token.clone(),
+                    user: self.discord_user.clone(),
+                };
+                save_discord(&cfg);
+            }
+        }
     }
 }
 
@@ -917,6 +1118,7 @@ fn spawn_worker(
     ctx: egui::Context,
     shared: Arc<Mutex<Shared>>,
     sound: Arc<AtomicBool>,
+    discord: Arc<Mutex<DiscordConfig>>,
     initial_folder: String,
     ctrl_rx: mpsc::Receiver<String>,
 ) {
@@ -956,6 +1158,7 @@ fn spawn_worker(
         run_check(
             &shared,
             &sound,
+            &discord,
             &ctx,
             &folder,
             &mut initialized,
@@ -992,6 +1195,7 @@ fn spawn_worker(
                 run_check(
                     &shared,
                     &sound,
+                    &discord,
                     &ctx,
                     &folder,
                     &mut initialized,
@@ -1007,6 +1211,7 @@ fn spawn_worker(
 fn run_check(
     shared: &Arc<Mutex<Shared>>,
     sound: &Arc<AtomicBool>,
+    discord: &Arc<Mutex<DiscordConfig>>,
     ctx: &egui::Context,
     folder: &str,
     initialized: &mut bool,
@@ -1014,6 +1219,19 @@ fn run_check(
     pctx: &mut ProfileCtx,
 ) {
     let ev = evaluate(folder, initialized, last_key, pctx);
+
+    // Build the alert message before ev is moved into shared state.
+    let fire = ev.is_new_same;
+    let alert_msg = if fire {
+        ev.current.as_ref().map(|v| {
+            format!(
+                "\u{1F6A8} SAME RAID \u{2014} you entered the same raid as your previous PMC match.\nServer: {}\nLocation: {}\nMode: {}\nTime: {}",
+                v.ip, v.location, v.mode_tag, v.time
+            )
+        })
+    } else {
+        None
+    };
 
     {
         let mut s = shared.lock().unwrap();
@@ -1031,8 +1249,18 @@ fn run_check(
     }
     ctx.request_repaint();
 
-    if ev.is_new_same && sound.load(Ordering::Relaxed) {
-        play_alert();
+    if fire {
+        if sound.load(Ordering::Relaxed) {
+            play_alert();
+        }
+        if let Some(msg) = alert_msg {
+            let cfg = discord.lock().unwrap().clone();
+            if cfg.enabled && cfg.is_configured() {
+                thread::spawn(move || {
+                    let _ = discord_send(&cfg, &msg);
+                });
+            }
+        }
     }
 }
 
@@ -1685,6 +1913,137 @@ fn play_alert() {
             let _ = Beep(1650, 240);
         }
     });
+}
+
+// ---- Discord notifications ----
+
+#[derive(Clone, Default)]
+struct DiscordConfig {
+    enabled: bool,
+    webhook: String,
+    token: String,
+    user: String,
+}
+
+impl DiscordConfig {
+    fn is_configured(&self) -> bool {
+        !self.webhook.trim().is_empty()
+            || (!self.token.trim().is_empty() && !self.user.trim().is_empty())
+    }
+}
+
+fn json_escape(s: &str) -> String {
+    let mut o = String::new();
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o
+}
+
+fn json_first_id(text: &str) -> Option<String> {
+    let p = text.find("\"id\":\"")? + 6;
+    let rest = &text[p..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+fn discord_post_webhook(url: &str, content: &str) -> Result<(), String> {
+    let body = format!("{{\"content\":\"{}\"}}", json_escape(content));
+    ureq::post(url)
+        .set("Content-Type", "application/json")
+        .timeout(Duration::from_secs(10))
+        .send_string(&body)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+fn discord_send_dm(token: &str, user: &str, content: &str) -> Result<(), String> {
+    let auth = format!("Bot {}", token);
+    // 1) open a DM channel with the user
+    let open = format!("{{\"recipient_id\":\"{}\"}}", json_escape(user));
+    let resp = ureq::post("https://discord.com/api/v10/users/@me/channels")
+        .set("Authorization", &auth)
+        .set("Content-Type", "application/json")
+        .timeout(Duration::from_secs(10))
+        .send_string(&open)
+        .map_err(|e| e.to_string())?;
+    let text = resp.into_string().map_err(|e| e.to_string())?;
+    let channel = json_first_id(&text).ok_or("could not open DM channel")?;
+    // 2) post the message
+    let body = format!("{{\"content\":\"{}\"}}", json_escape(content));
+    ureq::post(&format!(
+        "https://discord.com/api/v10/channels/{}/messages",
+        channel
+    ))
+    .set("Authorization", &auth)
+    .set("Content-Type", "application/json")
+    .timeout(Duration::from_secs(10))
+    .send_string(&body)
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+/// Send to whichever destinations are configured (webhook and/or bot DM).
+fn discord_send(cfg: &DiscordConfig, content: &str) -> Result<(), String> {
+    let mut sent = false;
+    if !cfg.webhook.trim().is_empty() {
+        discord_post_webhook(cfg.webhook.trim(), content)?;
+        sent = true;
+    }
+    if !cfg.token.trim().is_empty() && !cfg.user.trim().is_empty() {
+        discord_send_dm(cfg.token.trim(), cfg.user.trim(), content)?;
+        sent = true;
+    }
+    if sent {
+        Ok(())
+    } else {
+        Err("No webhook or bot configured".into())
+    }
+}
+
+fn discord_config_path() -> PathBuf {
+    let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    let dir = Path::new(&base).join("Raid IP Monitor");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("discord.txt")
+}
+
+fn load_discord() -> DiscordConfig {
+    let mut c = DiscordConfig::default();
+    if let Ok(text) = fs::read_to_string(discord_config_path()) {
+        for line in text.lines() {
+            if let Some((k, v)) = line.split_once('=') {
+                let v = v.trim().to_string();
+                match k.trim() {
+                    "enabled" => c.enabled = v == "1" || v.eq_ignore_ascii_case("true"),
+                    "webhook" => c.webhook = v,
+                    "token" => c.token = v,
+                    "user" => c.user = v,
+                    _ => {}
+                }
+            }
+        }
+    }
+    c
+}
+
+fn save_discord(c: &DiscordConfig) {
+    let out = format!(
+        "enabled={}\nwebhook={}\ntoken={}\nuser={}\n",
+        if c.enabled { 1 } else { 0 },
+        c.webhook.trim(),
+        c.token.trim(),
+        c.user.trim(),
+    );
+    let _ = fs::write(discord_config_path(), out);
 }
 
 // ---- Config persistence (last used folder) ----
