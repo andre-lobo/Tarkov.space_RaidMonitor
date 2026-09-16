@@ -619,21 +619,23 @@ impl eframe::App for RaidRadar {
                         .color(MUTED),
                 );
 
-                // Monitoring indicator
-                ui.add_space(6.0);
+                // Status pills (monitoring + game state)
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
-                    let (txt, col) = if monitoring {
-                        ("Monitoring (live)", GREEN)
+                    if monitoring {
+                        status_pill(ui, "Monitoring \u{00b7} live", GREEN);
+                        ui.add_space(8.0);
+                        if game_running {
+                            status_pill(ui, "Game running", GREEN);
+                        } else {
+                            status_pill(ui, "Game closed", RED);
+                        }
                     } else {
-                        ("Idle \u{2014} set a valid Logs folder", MUTED)
-                    };
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(12.0, 14.0), egui::Sense::hover());
-                    ui.painter().circle_filled(rect.center(), 5.0, col);
-                    ui.label(egui::RichText::new(txt).color(col).size(13.0));
+                        status_pill(ui, "Idle \u{00b7} set a valid Logs folder", MUTED);
+                    }
                 });
 
-                ui.add_space(10.0);
+                ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(14.0);
 
@@ -1032,6 +1034,23 @@ impl eframe::App for RaidRadar {
             }
         }
     }
+}
+
+/// Rounded status badge with a colored dot + label (e.g. "Monitoring · live").
+fn status_pill(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    egui::Frame::none()
+        .fill(PANEL)
+        .rounding(11.0)
+        .inner_margin(egui::Margin::symmetric(11.0, 5.0))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(9.0, 10.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 4.0, color);
+                ui.add_space(3.0);
+                ui.label(egui::RichText::new(text).color(color).size(12.5).strong());
+            });
+        });
 }
 
 /// Small rounded tag with a colored background.
