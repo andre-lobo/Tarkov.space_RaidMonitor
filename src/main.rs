@@ -892,7 +892,7 @@ impl eframe::App for RaidRadar {
                         egui::RichText::new(
                             "Get a message when you find a raid (PMC / SCAV, with Same / Different).",
                         )
-                        .size(11.0)
+                        .size(12.5)
                         .color(MUTED),
                     );
                     ui.add_space(14.0);
@@ -914,7 +914,7 @@ impl eframe::App for RaidRadar {
                                 egui::RichText::new(
                                     "1) Join our Discord   2) Paste your User ID   \u{2014} no token needed.",
                                 )
-                                .size(11.0)
+                                .size(12.5)
                                 .color(MUTED),
                             );
                             ui.add_space(10.0);
@@ -935,7 +935,7 @@ impl eframe::App for RaidRadar {
                             ui.add_space(10.0);
                             ui.label(
                                 egui::RichText::new("Your Discord User ID")
-                                    .size(12.0)
+                                    .size(13.0)
                                     .color(MUTED),
                             );
                             ui.add(
@@ -947,7 +947,7 @@ impl eframe::App for RaidRadar {
                                 egui::RichText::new(
                                     "Discord > Settings > Advanced > Developer Mode, then right-click your name > Copy User ID.",
                                 )
-                                .size(10.0)
+                                .size(12.0)
                                 .color(MUTED),
                             );
                         });
@@ -955,9 +955,10 @@ impl eframe::App for RaidRadar {
 
                     ui.horizontal(|ui| {
                         if ui
-                            .add(
+                            .add_sized(
+                                [130.0, 36.0],
                                 egui::Button::new(
-                                    egui::RichText::new("Send test").color(BG).strong(),
+                                    egui::RichText::new("Send test").size(14.0).color(BG).strong(),
                                 )
                                 .fill(ACCENT),
                             )
@@ -996,15 +997,16 @@ impl eframe::App for RaidRadar {
                             } else {
                                 MUTED
                             };
-                            ui.label(egui::RichText::new(st).size(12.0).color(c));
+                            ui.label(egui::RichText::new(st).size(13.0).color(c));
                         }
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
                                 if ui
-                                    .add(
+                                    .add_sized(
+                                        [110.0, 36.0],
                                         egui::Button::new(
-                                            egui::RichText::new("Close").color(TEXT),
+                                            egui::RichText::new("Close").size(14.0).color(TEXT),
                                         )
                                         .fill(PANEL),
                                     )
