@@ -256,6 +256,7 @@ struct RaidRadar {
     // Discord alert
     show_discord: bool,
     discord_enabled: bool,
+    discord_official: bool,
     discord_webhook: String,
     discord_token: String,
     discord_user: String,
@@ -305,6 +306,7 @@ impl RaidRadar {
             update: Arc::new(Mutex::new(UpdateStatus::Idle)),
             show_discord: false,
             discord_enabled: dcfg.enabled,
+            discord_official: dcfg.official,
             discord_webhook: dcfg.webhook,
             discord_token: dcfg.token,
             discord_user: dcfg.user,
@@ -471,11 +473,13 @@ impl eframe::App for RaidRadar {
         {
             let mut g = self.discord_shared.lock().unwrap();
             if g.enabled != self.discord_enabled
+                || g.official != self.discord_official
                 || g.webhook != self.discord_webhook
                 || g.token != self.discord_token
                 || g.user != self.discord_user
             {
                 g.enabled = self.discord_enabled;
+                g.official = self.discord_official;
                 g.webhook = self.discord_webhook.clone();
                 g.token = self.discord_token.clone();
                 g.user = self.discord_user.clone();
@@ -872,7 +876,7 @@ impl eframe::App for RaidRadar {
                         .inner_margin(egui::Margin::same(16.0)),
                 )
                 .show(ctx, |ui| {
-                    ui.set_width(430.0);
+                    ui.set_width(440.0);
                     ui.checkbox(
                         &mut self.discord_enabled,
                         egui::RichText::new("Send a Discord message when a raid is found")
@@ -880,6 +884,41 @@ impl eframe::App for RaidRadar {
                     );
                     ui.add_space(12.0);
 
+                    // Official bot (relay) — easiest, private DM.
+                    ui.checkbox(
+                        &mut self.discord_official,
+                        egui::RichText::new("Use the official Tarkov.space bot (private DM)")
+                            .color(TEXT),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Join the Tarkov.space Discord and allow DMs from server members. \
+                             You only need your User ID below.",
+                        )
+                        .size(10.5)
+                        .color(MUTED),
+                    );
+                    ui.add_space(8.0);
+                    ui.label(
+                        egui::RichText::new("Your Discord User ID")
+                            .size(12.0)
+                            .color(MUTED),
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.discord_user)
+                            .desired_width(f32::INFINITY)
+                            .hint_text("e.g. 123456789012345678"),
+                    );
+                    ui.add_space(14.0);
+
+                    ui.label(
+                        egui::RichText::new(
+                            "\u{2014} Advanced (optional): your own webhook / bot \u{2014}",
+                        )
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                    ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new("Webhook URL (posts to a channel)")
                             .size(12.0)
@@ -890,31 +929,17 @@ impl eframe::App for RaidRadar {
                             .desired_width(f32::INFINITY)
                             .hint_text("https://discord.com/api/webhooks/..."),
                     );
-                    ui.add_space(12.0);
-
+                    ui.add_space(6.0);
                     ui.label(
-                        egui::RichText::new("\u{2014} or private DM via a bot \u{2014}")
-                            .size(11.0)
+                        egui::RichText::new("Your own bot token (DM)")
+                            .size(12.0)
                             .color(MUTED),
                     );
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new("Bot token").size(12.0).color(MUTED));
                     ui.add(
                         egui::TextEdit::singleline(&mut self.discord_token)
                             .desired_width(f32::INFINITY)
                             .password(true)
                             .hint_text("bot token"),
-                    );
-                    ui.add_space(4.0);
-                    ui.label(
-                        egui::RichText::new("Your Discord User ID")
-                            .size(12.0)
-                            .color(MUTED),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.discord_user)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("e.g. 123456789012345678"),
                     );
                     ui.add_space(14.0);
 
@@ -930,6 +955,7 @@ impl eframe::App for RaidRadar {
                         {
                             let cfg = DiscordConfig {
                                 enabled: self.discord_enabled,
+                                official: self.discord_official,
                                 webhook: self.discord_webhook.clone(),
                                 token: self.discord_token.clone(),
                                 user: self.discord_user.clone(),
@@ -994,6 +1020,7 @@ impl eframe::App for RaidRadar {
                 self.show_discord = false;
                 let cfg = DiscordConfig {
                     enabled: self.discord_enabled,
+                    official: self.discord_official,
                     webhook: self.discord_webhook.clone(),
                     token: self.discord_token.clone(),
                     user: self.discord_user.clone(),
@@ -1945,9 +1972,12 @@ fn play_alert() {
 
 // ---- Discord notifications ----
 
+const DISCORD_RELAY_URL: &str = "https://tarkov.space/api/raid-alert";
+
 #[derive(Clone, Default)]
 struct DiscordConfig {
     enabled: bool,
+    official: bool, // use the Tarkov.space official bot (relay); only needs user id
     webhook: String,
     token: String,
     user: String,
@@ -1955,7 +1985,8 @@ struct DiscordConfig {
 
 impl DiscordConfig {
     fn is_configured(&self) -> bool {
-        !self.webhook.trim().is_empty()
+        (self.official && !self.user.trim().is_empty())
+            || !self.webhook.trim().is_empty()
             || (!self.token.trim().is_empty() && !self.user.trim().is_empty())
     }
 }
@@ -1981,6 +2012,20 @@ fn json_first_id(text: &str) -> Option<String> {
     let rest = &text[p..];
     let end = rest.find('"')?;
     Some(rest[..end].to_string())
+}
+
+fn discord_post_relay(user: &str, content: &str) -> Result<(), String> {
+    let body = format!(
+        "{{\"userId\":\"{}\",\"message\":\"{}\"}}",
+        json_escape(user.trim()),
+        json_escape(content)
+    );
+    ureq::post(DISCORD_RELAY_URL)
+        .set("Content-Type", "application/json")
+        .timeout(Duration::from_secs(10))
+        .send_string(&body)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn discord_post_webhook(url: &str, content: &str) -> Result<(), String> {
@@ -2019,21 +2064,32 @@ fn discord_send_dm(token: &str, user: &str, content: &str) -> Result<(), String>
     .map_err(|e| e.to_string())
 }
 
-/// Send to whichever destinations are configured (webhook and/or bot DM).
+/// Send to whichever destinations are configured (official relay, webhook, own bot DM).
 fn discord_send(cfg: &DiscordConfig, content: &str) -> Result<(), String> {
     let mut sent = false;
+    let mut last_err: Option<String> = None;
+    if cfg.official && !cfg.user.trim().is_empty() {
+        match discord_post_relay(&cfg.user, content) {
+            Ok(()) => sent = true,
+            Err(e) => last_err = Some(e),
+        }
+    }
     if !cfg.webhook.trim().is_empty() {
-        discord_post_webhook(cfg.webhook.trim(), content)?;
-        sent = true;
+        match discord_post_webhook(cfg.webhook.trim(), content) {
+            Ok(()) => sent = true,
+            Err(e) => last_err = Some(e),
+        }
     }
     if !cfg.token.trim().is_empty() && !cfg.user.trim().is_empty() {
-        discord_send_dm(cfg.token.trim(), cfg.user.trim(), content)?;
-        sent = true;
+        match discord_send_dm(cfg.token.trim(), cfg.user.trim(), content) {
+            Ok(()) => sent = true,
+            Err(e) => last_err = Some(e),
+        }
     }
     if sent {
         Ok(())
     } else {
-        Err("No webhook or bot configured".into())
+        Err(last_err.unwrap_or_else(|| "No destination configured".into()))
     }
 }
 
@@ -2052,6 +2108,7 @@ fn load_discord() -> DiscordConfig {
                 let v = v.trim().to_string();
                 match k.trim() {
                     "enabled" => c.enabled = v == "1" || v.eq_ignore_ascii_case("true"),
+                    "official" => c.official = v == "1" || v.eq_ignore_ascii_case("true"),
                     "webhook" => c.webhook = v,
                     "token" => c.token = v,
                     "user" => c.user = v,
@@ -2065,8 +2122,9 @@ fn load_discord() -> DiscordConfig {
 
 fn save_discord(c: &DiscordConfig) {
     let out = format!(
-        "enabled={}\nwebhook={}\ntoken={}\nuser={}\n",
+        "enabled={}\nofficial={}\nwebhook={}\ntoken={}\nuser={}\n",
         if c.enabled { 1 } else { 0 },
+        if c.official { 1 } else { 0 },
         c.webhook.trim(),
         c.token.trim(),
         c.user.trim(),
