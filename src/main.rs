@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{fs, thread};
 
 use notify::{RecursiveMode, Watcher};
@@ -263,6 +263,7 @@ struct RaidRadar {
     discord_user: String,
     discord_shared: Arc<Mutex<DiscordConfig>>,
     discord_test: Arc<Mutex<String>>,
+    discord_test_at: Option<Instant>,
 }
 
 impl RaidRadar {
@@ -313,6 +314,7 @@ impl RaidRadar {
             discord_user: dcfg.user,
             discord_shared,
             discord_test: Arc::new(Mutex::new(String::new())),
+            discord_test_at: None,
         }
     }
 }
@@ -963,16 +965,29 @@ impl eframe::App for RaidRadar {
                     ui.add_space(14.0);
 
                     ui.horizontal(|ui| {
+                        // Cooldown: one test every 10 seconds (anti-spam).
+                        let remaining = self
+                            .discord_test_at
+                            .map(|t| 10.0 - t.elapsed().as_secs_f32())
+                            .unwrap_or(0.0);
+                        let can_test = remaining <= 0.0;
+                        let label = if can_test {
+                            "Send test".to_string()
+                        } else {
+                            format!("Send test ({}s)", remaining.ceil() as i32)
+                        };
                         if ui
-                            .add_sized(
-                                [130.0, 36.0],
+                            .add_enabled(
+                                can_test,
                                 egui::Button::new(
-                                    egui::RichText::new("Send test").size(14.0).color(BG).strong(),
+                                    egui::RichText::new(label).size(14.0).color(BG).strong(),
                                 )
-                                .fill(ACCENT),
+                                .fill(ACCENT)
+                                .min_size(egui::vec2(150.0, 36.0)),
                             )
                             .clicked()
                         {
+                            self.discord_test_at = Some(Instant::now());
                             let cfg = DiscordConfig {
                                 enabled: self.discord_enabled,
                                 official: self.discord_official,
