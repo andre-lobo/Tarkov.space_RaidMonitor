@@ -1517,21 +1517,21 @@ fn evaluate(
     // Discord message on every newly-found raid (PMC or SCAV; SCAV also says
     // Same/Different when the previous match was PMC).
     let discord_msg = if new_raid_live {
-        // Emoji + bold headline, in English.
-        let (emoji, head) = if cur_side == "PMC" {
-            ("\u{1F3AF}", "Raid found \u{2014} PMC")
+        // Bold headline, English, no emoji.
+        let head = if cur_side == "PMC" {
+            "Raid found \u{2014} PMC"
         } else if cur_side == "SCAV" {
             if pmc_to_scav {
                 if same {
-                    ("\u{1F7E2}", "SAME RAID \u{2014} SCAV in your previous PMC raid")
+                    "SAME RAID \u{2014} SCAV in your previous PMC raid"
                 } else {
-                    ("\u{1F534}", "Raid found \u{2014} SCAV (different raid)")
+                    "Raid found \u{2014} SCAV (different raid)"
                 }
             } else {
-                ("\u{1F3AF}", "Raid found \u{2014} SCAV")
+                "Raid found \u{2014} SCAV"
             }
         } else {
-            ("\u{1F3AF}", "Raid found")
+            "Raid found"
         };
         let mode = if cur_view.mode_tag.is_empty() {
             cur_view.mode.clone()
@@ -1539,8 +1539,8 @@ fn evaluate(
             cur_view.mode_tag.clone()
         };
         Some(format!(
-            "{} **{}**\n**Server:** {}\n**Map:** {}\n**Mode:** {}\n**Time:** {}",
-            emoji, head, cur_view.ip, cur_view.location, mode, cur_view.time
+            "**{}**\n**Server:** {}\n**Map:** {}\n**Mode:** {}\n**Time:** {}",
+            head, cur_view.ip, cur_view.location, mode, cur_view.time
         ))
     } else {
         None
