@@ -555,13 +555,15 @@ impl eframe::App for RaidRadar {
                         ui.add_space(6.0);
                         ui.checkbox(&mut self.sound_ui, egui::RichText::new("Sound").color(MUTED));
                         ui.add_space(8.0);
-                        let dcolor = if self.discord_enabled { GREEN } else { MUTED };
+                        let (dtxt, dcolor) = if self.discord_enabled {
+                            ("Discord Alerts: ON", GREEN)
+                        } else {
+                            ("Discord Alerts: OFF", MUTED)
+                        };
                         if ui
                             .add(
-                                egui::Button::new(
-                                    egui::RichText::new("Discord").size(12.0).color(dcolor),
-                                )
-                                .fill(PANEL),
+                                egui::Button::new(egui::RichText::new(dtxt).size(12.0).color(dcolor))
+                                    .fill(PANEL),
                             )
                             .clicked()
                         {
@@ -876,71 +878,79 @@ impl eframe::App for RaidRadar {
                         .inner_margin(egui::Margin::same(16.0)),
                 )
                 .show(ctx, |ui| {
-                    ui.set_width(440.0);
+                    ui.set_width(430.0);
+
+                    // Master toggle
                     ui.checkbox(
                         &mut self.discord_enabled,
-                        egui::RichText::new("Send a Discord message when a raid is found")
-                            .color(TEXT),
-                    );
-                    ui.add_space(12.0);
-
-                    // Official bot (relay) — easiest, private DM.
-                    ui.checkbox(
-                        &mut self.discord_official,
-                        egui::RichText::new("Use the official Tarkov.space bot (private DM)")
+                        egui::RichText::new("Enable Discord alerts")
+                            .size(15.0)
+                            .strong()
                             .color(TEXT),
                     );
                     ui.label(
                         egui::RichText::new(
-                            "Join the Tarkov.space Discord and allow DMs from server members. \
-                             You only need your User ID below.",
-                        )
-                        .size(10.5)
-                        .color(MUTED),
-                    );
-                    ui.add_space(8.0);
-                    ui.label(
-                        egui::RichText::new("Your Discord User ID")
-                            .size(12.0)
-                            .color(MUTED),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.discord_user)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("e.g. 123456789012345678"),
-                    );
-                    ui.add_space(14.0);
-
-                    ui.label(
-                        egui::RichText::new(
-                            "\u{2014} Advanced (optional): your own webhook / bot \u{2014}",
+                            "Get a message when you find a raid (PMC / SCAV, with Same / Different).",
                         )
                         .size(11.0)
                         .color(MUTED),
                     );
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new("Webhook URL (posts to a channel)")
-                            .size(12.0)
-                            .color(MUTED),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.discord_webhook)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("https://discord.com/api/webhooks/..."),
-                    );
-                    ui.add_space(6.0);
-                    ui.label(
-                        egui::RichText::new("Your own bot token (DM)")
-                            .size(12.0)
-                            .color(MUTED),
-                    );
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.discord_token)
-                            .desired_width(f32::INFINITY)
-                            .password(true)
-                            .hint_text("bot token"),
-                    );
+                    ui.add_space(14.0);
+
+                    // Primary path: official bot (only needs the User ID).
+                    egui::Frame::none()
+                        .fill(PANEL)
+                        .rounding(8.0)
+                        .inner_margin(egui::Margin::same(14.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(
+                                egui::RichText::new("Private DM via the Tarkov.space bot")
+                                    .strong()
+                                    .color(TEXT),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(
+                                egui::RichText::new(
+                                    "1) Join our Discord   2) Paste your User ID   \u{2014} no token needed.",
+                                )
+                                .size(11.0)
+                                .color(MUTED),
+                            );
+                            ui.add_space(10.0);
+                            if ui
+                                .add_sized(
+                                    [ui.available_width(), 34.0],
+                                    egui::Button::new(
+                                        egui::RichText::new("Join the Tarkov.space Discord")
+                                            .strong()
+                                            .color(BG),
+                                    )
+                                    .fill(ACCENT),
+                                )
+                                .clicked()
+                            {
+                                open_url(DISCORD_INVITE_URL);
+                            }
+                            ui.add_space(10.0);
+                            ui.label(
+                                egui::RichText::new("Your Discord User ID")
+                                    .size(12.0)
+                                    .color(MUTED),
+                            );
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.discord_user)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("e.g. 338463111726235661"),
+                            );
+                            ui.label(
+                                egui::RichText::new(
+                                    "Discord \u{2192} Settings \u{2192} Advanced \u{2192} Developer Mode, then right-click your name \u{2192} Copy User ID.",
+                                )
+                                .size(10.0)
+                                .color(MUTED),
+                            );
+                        });
                     ui.add_space(14.0);
 
                     ui.horizontal(|ui| {
@@ -1973,6 +1983,7 @@ fn play_alert() {
 // ---- Discord notifications ----
 
 const DISCORD_RELAY_URL: &str = "https://www.tarkov.space/api/raid-alert";
+const DISCORD_INVITE_URL: &str = "https://discord.gg/7KCq97jrxA";
 
 #[derive(Clone, Default)]
 struct DiscordConfig {
@@ -1985,9 +1996,7 @@ struct DiscordConfig {
 
 impl DiscordConfig {
     fn is_configured(&self) -> bool {
-        (self.official && !self.user.trim().is_empty())
-            || !self.webhook.trim().is_empty()
-            || (!self.token.trim().is_empty() && !self.user.trim().is_empty())
+        !self.user.trim().is_empty() || !self.webhook.trim().is_empty()
     }
 }
 
@@ -2068,7 +2077,7 @@ fn discord_send_dm(token: &str, user: &str, content: &str) -> Result<(), String>
 fn discord_send(cfg: &DiscordConfig, content: &str) -> Result<(), String> {
     let mut sent = false;
     let mut last_err: Option<String> = None;
-    if cfg.official && !cfg.user.trim().is_empty() {
+    if !cfg.user.trim().is_empty() {
         match discord_post_relay(&cfg.user, content) {
             Ok(()) => sent = true,
             Err(e) => last_err = Some(e),
