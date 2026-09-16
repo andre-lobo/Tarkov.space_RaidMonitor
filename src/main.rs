@@ -60,7 +60,7 @@ fn decode_png(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([660.0, 630.0])
+        .with_inner_size([660.0, 700.0])
         .with_resizable(false)
         .with_maximize_button(false)
         .with_title(APP_TITLE);
