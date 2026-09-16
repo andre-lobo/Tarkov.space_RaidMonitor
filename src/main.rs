@@ -48,6 +48,7 @@ const GREEN: egui::Color32 = egui::Color32::from_rgb(0x3F, 0xD1, 0x7A);
 const RED: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x4F, 0x4F);
 const TEXT: egui::Color32 = egui::Color32::from_rgb(0xE6, 0xE6, 0xE6);
 const MUTED: egui::Color32 = egui::Color32::from_rgb(0x9A, 0x9A, 0x9A);
+const TLD: egui::Color32 = egui::Color32::from_rgb(0xC9, 0xB0, 0x83); // ".space" khaki (official)
 const SIDE_PMC: egui::Color32 = egui::Color32::from_rgb(0x35, 0x5E, 0x9C); // blue
 const SIDE_SCAV: egui::Color32 = egui::Color32::from_rgb(0x9C, 0x54, 0x54); // faded red
 
@@ -538,12 +539,18 @@ impl eframe::App for RaidRadar {
                         )));
                         ui.add_space(8.0);
                     }
-                    ui.label(
-                        egui::RichText::new(APP_TITLE)
-                            .size(19.0)
-                            .strong()
-                            .color(ACCENT),
-                    );
+                    // Brand title: "Tarkov" (white) + ".space" (khaki) + product.
+                    ui.scope(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.label(egui::RichText::new("Tarkov").size(20.0).strong().color(TEXT));
+                        ui.label(egui::RichText::new(".space").size(20.0).strong().color(TLD));
+                        ui.label(
+                            egui::RichText::new("  Raid Monitor")
+                                .size(20.0)
+                                .strong()
+                                .color(ACCENT),
+                        );
+                    });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let test = ui.add(
                             egui::Button::new(egui::RichText::new("Test").color(BG).strong())
