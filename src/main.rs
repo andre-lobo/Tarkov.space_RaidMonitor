@@ -572,7 +572,7 @@ impl eframe::App for RaidRadar {
                     });
                 });
                 ui.label(
-                    egui::RichText::new("Cross-profile same-raid detector (PMC \u{2194} SCAV, by IP)")
+                    egui::RichText::new("Cross-profile same-raid detector (PMC / SCAV, by IP)")
                         .size(12.0)
                         .color(MUTED),
                 );
@@ -945,7 +945,7 @@ impl eframe::App for RaidRadar {
                             );
                             ui.label(
                                 egui::RichText::new(
-                                    "Discord \u{2192} Settings \u{2192} Advanced \u{2192} Developer Mode, then right-click your name \u{2192} Copy User ID.",
+                                    "Discord > Settings > Advanced > Developer Mode, then right-click your name > Copy User ID.",
                                 )
                                 .size(10.0)
                                 .color(MUTED),
@@ -1015,15 +1015,6 @@ impl eframe::App for RaidRadar {
                             },
                         );
                     });
-                    ui.add_space(10.0);
-                    ui.label(
-                        egui::RichText::new(
-                            "Webhook: channel \u{2192} Edit \u{2192} Integrations \u{2192} Webhooks (use a private channel). \
-                             DM: create a bot, share a server with it, and enable Developer Mode to copy your User ID.",
-                        )
-                        .size(10.5)
-                        .color(MUTED),
-                    );
                 });
 
             if close {
