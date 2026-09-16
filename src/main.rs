@@ -144,12 +144,41 @@ fn build_view(r: &Raid, ctx: &ProfileCtx) -> RaidView {
     RaidView {
         time: fmt_time(&r.ts),
         ip: if r.addr.is_empty() { "-".into() } else { r.addr.clone() },
-        location: dash(&r.location),
+        location: normalize_map(&r.location),
         mode: capitalize(&r.game_mode),
         profile: profile_label(r, ctx),
         mode_tag: r.mode_tag.clone(),
         side: profile_side(r, ctx).to_string(),
     }
+}
+
+/// Map the game's internal location id to the friendly map name.
+fn normalize_map(raw: &str) -> String {
+    let k = raw.trim().to_lowercase();
+    if k.is_empty() {
+        return "-".into();
+    }
+    if k.starts_with("factory4") || k == "factory" {
+        return "Factory".into();
+    }
+    if k.starts_with("sandbox") {
+        return "Ground Zero".into();
+    }
+    let name = match k.as_str() {
+        "bigmap" | "customs" => "Customs",
+        "interchange" => "Interchange",
+        "lighthouse" => "Lighthouse",
+        "rezervbase" | "reserve" => "Reserve",
+        "shoreline" => "Shoreline",
+        "tarkovstreets" | "streets" => "Streets of Tarkov",
+        "woods" | "woods_snow" => "Woods",
+        "laboratory" | "lab" => "The Lab",
+        "labyrinth" => "The Labyrinth",
+        "terminal" => "Terminal",
+        "icebreaker" => "Icebreaker",
+        _ => return raw.trim().to_string(), // unknown -> show as-is
+    };
+    name.into()
 }
 
 /// "PMC" / "SCAV" / "" (unresolved).
@@ -206,14 +235,6 @@ fn profile_label(r: &Raid, ctx: &ProfileCtx) -> String {
         short_id(&r.profile_id)
     } else {
         "SCAV".into()
-    }
-}
-
-fn dash(s: &str) -> String {
-    if s.is_empty() {
-        "-".into()
-    } else {
-        s.to_string()
     }
 }
 
