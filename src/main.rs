@@ -1972,7 +1972,7 @@ fn play_alert() {
 
 // ---- Discord notifications ----
 
-const DISCORD_RELAY_URL: &str = "https://tarkov.space/api/raid-alert";
+const DISCORD_RELAY_URL: &str = "https://www.tarkov.space/api/raid-alert";
 
 #[derive(Clone, Default)]
 struct DiscordConfig {
