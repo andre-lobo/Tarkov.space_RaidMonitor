@@ -875,7 +875,8 @@ impl eframe::App for RaidRadar {
                     ui.set_width(430.0);
                     ui.checkbox(
                         &mut self.discord_enabled,
-                        egui::RichText::new("Send a Discord message on SAME RAID").color(TEXT),
+                        egui::RichText::new("Send a Discord message when a raid is found")
+                            .color(TEXT),
                     );
                     ui.add_space(12.0);
 
@@ -1220,18 +1221,9 @@ fn run_check(
 ) {
     let ev = evaluate(folder, initialized, last_key, pctx);
 
-    // Build the alert message before ev is moved into shared state.
-    let fire = ev.is_new_same;
-    let alert_msg = if fire {
-        ev.current.as_ref().map(|v| {
-            format!(
-                "\u{1F6A8} SAME RAID \u{2014} you entered the same raid as your previous PMC match.\nServer: {}\nLocation: {}\nMode: {}\nTime: {}",
-                v.ip, v.location, v.mode_tag, v.time
-            )
-        })
-    } else {
-        None
-    };
+    // Capture triggers before ev is moved into shared state.
+    let play_sound = ev.is_new_same; // sound only on a live SAME RAID
+    let discord_msg = ev.discord_msg.clone(); // Discord on every newly-found raid
 
     {
         let mut s = shared.lock().unwrap();
@@ -1249,17 +1241,15 @@ fn run_check(
     }
     ctx.request_repaint();
 
-    if fire {
-        if sound.load(Ordering::Relaxed) {
-            play_alert();
-        }
-        if let Some(msg) = alert_msg {
-            let cfg = discord.lock().unwrap().clone();
-            if cfg.enabled && cfg.is_configured() {
-                thread::spawn(move || {
-                    let _ = discord_send(&cfg, &msg);
-                });
-            }
+    if play_sound && sound.load(Ordering::Relaxed) {
+        play_alert();
+    }
+    if let Some(msg) = discord_msg {
+        let cfg = discord.lock().unwrap().clone();
+        if cfg.enabled && cfg.is_configured() {
+            thread::spawn(move || {
+                let _ = discord_send(&cfg, &msg);
+            });
         }
     }
 }
@@ -1276,6 +1266,7 @@ struct Eval {
     previous: Option<RaidView>,
     history: Vec<RaidView>,
     is_new_same: bool,
+    discord_msg: Option<String>,
 }
 
 impl Eval {
@@ -1292,6 +1283,7 @@ impl Eval {
             previous: None,
             history: Vec::new(),
             is_new_same: false,
+            discord_msg: None,
         }
     }
 }
@@ -1405,6 +1397,7 @@ fn evaluate(
             previous: None,
             history,
             is_new_same: false,
+            discord_msg: None,
         };
     }
 
@@ -1424,11 +1417,44 @@ fn evaluate(
         None => (None, ""),
     };
 
-    // Verdict on a PMC -> SCAV pair (current/last SCAV, previous PMC). Shown live
-    // AND retrospectively for the last completed raid; the sound only fires live.
+    // A raid we just connected to this tick (live).
+    let new_raid_live = in_raid && was_initialized && key_changed;
     let pmc_to_scav = cur_side == "SCAV" && prev_side == "PMC";
+    let same = pmc_to_scav && prev.map_or(false, |p| p.addr == cur.addr);
+
+    // Discord message on every newly-found raid (PMC or SCAV; SCAV also says
+    // Same/Different when the previous match was PMC).
+    let discord_msg = if new_raid_live {
+        let head = if cur_side == "PMC" {
+            "Encontrou Raid - Player PMC".to_string()
+        } else if cur_side == "SCAV" {
+            if pmc_to_scav {
+                if same {
+                    "Encontrou Raid - Player Scav - Same Raid".to_string()
+                } else {
+                    "Encontrou Raid - Player Scav - Different Raid".to_string()
+                }
+            } else {
+                "Encontrou Raid - Player Scav".to_string()
+            }
+        } else {
+            "Encontrou Raid".to_string()
+        };
+        let mode = if cur_view.mode_tag.is_empty() {
+            cur_view.mode.clone()
+        } else {
+            cur_view.mode_tag.clone()
+        };
+        Some(format!(
+            "{}\nServer: {}\nLocation: {}\nMode: {}\nTime: {}",
+            head, cur_view.ip, cur_view.location, mode, cur_view.time
+        ))
+    } else {
+        None
+    };
+
+    // Verdict on a PMC -> SCAV pair (display). Sound only fires live.
     if pmc_to_scav {
-        let same = prev.map_or(false, |p| p.addr == cur.addr);
         let is_new_same = same && in_raid && was_initialized && key_changed;
         let (status, headline) = if same {
             (Status::Same, "SAME RAID")
@@ -1453,6 +1479,7 @@ fn evaluate(
             previous: prev_view,
             history,
             is_new_same,
+            discord_msg,
         };
     }
 
@@ -1482,6 +1509,7 @@ fn evaluate(
         previous: None,
         history,
         is_new_same: false,
+        discord_msg,
     }
 }
 
